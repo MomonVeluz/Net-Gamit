@@ -2177,33 +2177,83 @@ function New-NetGamitCombinedReport {
         Title="Net-Gamit - Windows Connectivity Tool"
         Height="820" Width="1180" MinHeight="720" MinWidth="980"
         WindowStartupLocation="CenterScreen"
-        Background="#F4F7FA"
+        Background="#F4F4F4"
         FontFamily="Segoe UI">
     <Window.Resources>
+        <SolidColorBrush x:Key="ThermoRedBrush" Color="#E31B23"/>
+        <SolidColorBrush x:Key="ThermoRedDarkBrush" Color="#B5121B"/>
+        <SolidColorBrush x:Key="ThermoBlackBrush" Color="#1D1D1B"/>
+        <SolidColorBrush x:Key="ThermoCharcoalBrush" Color="#343434"/>
+        <SolidColorBrush x:Key="ThermoGrayBrush" Color="#6E6E6E"/>
+        <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F4F4F4"/>
+        <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="PanelBorderBrush" Color="#D5D5D5"/>
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#4A4A4A"/>
+        <SolidColorBrush x:Key="DisabledSurfaceBrush" Color="#D7D7D7"/>
+        <SolidColorBrush x:Key="DisabledBorderBrush" Color="#C9CDD2"/>
+        <SolidColorBrush x:Key="DisabledTextBrush" Color="#7A8088"/>
         <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#17212B"/>
+            <Setter Property="Foreground" Value="{StaticResource ThermoBlackBrush}"/>
         </Style>
         <Style TargetType="Button">
             <Setter Property="Padding" Value="14,8"/>
             <Setter Property="Margin" Value="6,0,0,0"/>
             <Setter Property="MinWidth" Value="92"/>
-            <Setter Property="Background" Value="#175CD3"/>
+            <Setter Property="Background" Value="{StaticResource ThermoRedBrush}"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="#175CD3"/>
+            <Setter Property="BorderBrush" Value="{StaticResource ThermoRedBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource ThermoRedDarkBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource ThermoRedDarkBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="{StaticResource DisabledSurfaceBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource DisabledBorderBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource DisabledTextBrush}"/>
+                    <Setter Property="Cursor" Value="Arrow"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="TextBox">
             <Setter Property="Padding" Value="8"/>
-            <Setter Property="BorderBrush" Value="#B8C4D4"/>
+            <Setter Property="BorderBrush" Value="#B9B9B9"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Background" Value="White"/>
+            <Setter Property="Background" Value="{StaticResource PanelBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ThermoBlackBrush}"/>
         </Style>
         <Style TargetType="ComboBox">
             <Setter Property="Padding" Value="7"/>
-            <Setter Property="BorderBrush" Value="#B8C4D4"/>
+            <Setter Property="BorderBrush" Value="#B9B9B9"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Background" Value="White"/>
+            <Setter Property="Background" Value="{StaticResource PanelBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ThermoBlackBrush}"/>
+        </Style>
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Background" Value="#ECECEC"/>
+            <Setter Property="Foreground" Value="{StaticResource ThermoBlackBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource PanelBackgroundBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource ThermoRedBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource ThermoRedBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="ProgressBar">
+            <Setter Property="Foreground" Value="{StaticResource ThermoRedBrush}"/>
+            <Setter Property="Background" Value="#E5E5E5"/>
+            <Setter Property="BorderBrush" Value="#CFCFCF"/>
         </Style>
         <Style x:Key="MonoTextBox" TargetType="TextBox">
             <Setter Property="FontFamily" Value="Consolas"/>
@@ -2215,8 +2265,9 @@ function New-NetGamitCombinedReport {
             <Setter Property="TextWrapping" Value="NoWrap"/>
             <Setter Property="IsReadOnly" Value="True"/>
             <Setter Property="Padding" Value="10"/>
-            <Setter Property="BorderBrush" Value="#C8D2DF"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#C7C7C7"/>
+            <Setter Property="Background" Value="{StaticResource PanelBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="#111111"/>
         </Style>
     </Window.Resources>
     <Grid Margin="18">
@@ -2226,7 +2277,7 @@ function New-NetGamitCombinedReport {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#102A43" CornerRadius="8" Padding="18" Margin="0,0,0,14">
+        <Border Grid.Row="0" Background="{StaticResource ThermoBlackBrush}" BorderBrush="{StaticResource ThermoRedBrush}" BorderThickness="0,0,0,5" CornerRadius="8" Padding="18" Margin="0,0,0,14">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -2234,16 +2285,16 @@ function New-NetGamitCombinedReport {
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="Net-Gamit" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                    <TextBlock Text="Basic Windows Connectivity Tool By MomonVeluz" Foreground="#D8E6F3" FontSize="14" Margin="0,3,0,0"/>
+                    <TextBlock Text="Basic Windows Connectivity Tool By MomonVeluz" Foreground="#EFEFEF" FontSize="14" Margin="0,3,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Name="ExportReportButton" Content="Export Report" Background="#B7D8BF" BorderBrush="#B7D8BF" IsEnabled="False"/>
-                    <Button Name="ClearButton" Content="Clear" Background="#8A1C1C" BorderBrush="#8A1C1C" IsEnabled="False"/>
+                    <Button Name="ExportReportButton" Content="Export Report" Background="#D7D7D7" BorderBrush="#C9CDD2" Foreground="#7A8088" IsEnabled="False"/>
+                    <Button Name="ClearButton" Content="Clear" Background="#D7D7D7" BorderBrush="#C9CDD2" Foreground="#7A8088" IsEnabled="False"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <TabControl Grid.Row="1" Name="MainTabs" Background="#F4F7FA">
+        <TabControl Grid.Row="1" Name="MainTabs" Background="{StaticResource AppBackgroundBrush}">
             <TabItem Header="Test Destination Node">
                 <Grid Margin="0,14,0,0">
                     <Grid.RowDefinitions>
@@ -2251,7 +2302,7 @@ function New-NetGamitCombinedReport {
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" Background="White" BorderBrush="#D6DEE8" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                    <Border Grid.Row="0" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -2303,13 +2354,13 @@ function New-NetGamitCombinedReport {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="White" BorderBrush="#D6DEE8" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                    <Border Grid.Row="0" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Summarize the machine's active network path, adapters, Wi-Fi signal, routes, sockets, firewall, proxy, and native Windows command output." VerticalAlignment="Center" Foreground="#344054"/>
+                            <TextBlock Text="Summarize the machine's active network path, adapters, Wi-Fi signal, routes, sockets, firewall, proxy, and native Windows command output." VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
                             <Button Grid.Column="1" Name="RunHealthButton" Content="Run Health Check" MinWidth="142"/>
                         </Grid>
                     </Border>
@@ -2336,13 +2387,13 @@ function New-NetGamitCombinedReport {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="White" BorderBrush="#D6DEE8" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                    <Border Grid.Row="0" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Collect WLAN adapter details, netsh wlan output, PowerShell adapter data, and WLAN-related event logs from the last 6 hours." VerticalAlignment="Center" Foreground="#344054"/>
+                            <TextBlock Text="Collect WLAN adapter details, netsh wlan output, PowerShell adapter data, and WLAN-related event logs from the last 6 hours." VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
                             <Button Grid.Column="1" Name="RunWlanButton" Content="Run WLAN Diagnostics" MinWidth="168"/>
                         </Grid>
                     </Border>
@@ -2369,21 +2420,21 @@ function New-NetGamitCombinedReport {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="White" BorderBrush="#D6DEE8" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
-                        <TextBlock Text="Reports are generated automatically after Test Destination Node, Network Health Check, or WLAN Diagnostics completes." Foreground="#344054"/>
+                    <Border Grid.Row="0" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                        <TextBlock Text="Reports are generated automatically after Test Destination Node, Network Health Check, or WLAN Diagnostics completes." Foreground="{StaticResource MutedTextBrush}"/>
                     </Border>
                     <TextBox Grid.Row="1" Name="ReportBox" Style="{StaticResource MonoTextBox}" TextWrapping="NoWrap"/>
                 </Grid>
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="2" Background="#E8EEF5" BorderBrush="#D6DEE8" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,12,0,0">
+        <Border Grid.Row="2" Background="#EDEDED" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,12,0,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="220"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Name="StatusText" Text="Ready." VerticalAlignment="Center" Foreground="#344054"/>
+                <TextBlock Name="StatusText" Text="Ready." VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
                 <ProgressBar Grid.Column="1" Name="BusyProgress" Height="16" IsIndeterminate="False"/>
             </Grid>
         </Border>
@@ -2504,14 +2555,20 @@ function Set-NetGamitReportActionState {
     $ClearButton.IsEnabled = (-not $IsBusy -and $hasReport)
 
     if ($canUseReportActions) {
-        $ExportReportButton.Background = '#1F8A3B'
-        $ExportReportButton.BorderBrush = '#1F8A3B'
+        $ExportReportButton.Background = '#E31B23'
+        $ExportReportButton.BorderBrush = '#E31B23'
         $ExportReportButton.Foreground = 'White'
+        $ClearButton.Background = '#343434'
+        $ClearButton.BorderBrush = '#343434'
+        $ClearButton.Foreground = 'White'
     }
     else {
-        $ExportReportButton.Background = '#B7D8BF'
-        $ExportReportButton.BorderBrush = '#B7D8BF'
-        $ExportReportButton.Foreground = '#F7FFF8'
+        $ExportReportButton.Background = '#D7D7D7'
+        $ExportReportButton.BorderBrush = '#C9CDD2'
+        $ExportReportButton.Foreground = '#7A8088'
+        $ClearButton.Background = '#D7D7D7'
+        $ClearButton.BorderBrush = '#C9CDD2'
+        $ClearButton.Foreground = '#7A8088'
     }
 }
 
