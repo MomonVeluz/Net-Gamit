@@ -1391,55 +1391,6 @@ function New-NetGamitSystemHealthAnalysis {
         $primaryType = & $getAdapterType $primaryAdapter
     }
 
-    $lines.Add('NETWORK HEALTH SUMMARY')
-    $lines.Add('')
-
-    if ($primary) {
-        $gatewayText = & $formatValue $primary.NextHop 'direct/none'
-        $primaryLabel = if ($primaryType -eq 'WLAN') {
-            'Wi-Fi/WLAN'
-        }
-        elseif ($primaryType -eq 'LAN') {
-            'LAN/Ethernet'
-        }
-        else {
-            $primaryType
-        }
-
-        $lines.Add("Primary internet path: $primaryLabel via '$($primary.InterfaceAlias)'")
-        $lines.Add("Gateway/next hop: $gatewayText")
-        $lines.Add("Route metric: $($primary.TotalMetric) - lower metric means Windows prefers this path.")
-
-        if ($connectedWlan.Count -gt 0 -and $primaryType -ne 'WLAN') {
-            $lines.Add("Note: Wi-Fi is connected, but it is not the preferred internet path based on the current default route.")
-        }
-    }
-    else {
-        $lines.Add('Primary internet path: Not found')
-        $lines.Add('No IPv4 default route was detected, so internet/routed network access may not work.')
-    }
-
-    $lines.Add('')
-    $lines.Add("Active interfaces: $($activeAdapters.Count)")
-    if ($activeAdapters.Count -gt 0) {
-        foreach ($adapter in ($activeAdapters | Sort-Object Name)) {
-            $adapterType = & $getAdapterType $adapter
-            $speed = & $formatValue $adapter.LinkSpeed 'speed not reported'
-            $duplex = & $formatValue $adapter.Duplex 'duplex not reported'
-            if ($adapterType -eq 'WLAN' -and $duplex -eq 'duplex not reported') {
-                $duplex = 'not applicable/reported for Wi-Fi'
-            }
-            $ipv4 = & $formatValue $adapter.IPv4 'no IPv4 address'
-            $gateway = & $formatValue $adapter.Gateway 'no default gateway on this adapter'
-
-            $lines.Add("- $($adapter.Name): $adapterType, $($adapter.Status), $speed, duplex: $duplex, IPv4: $ipv4, gateway: $gateway")
-        }
-    }
-    else {
-        $lines.Add('- No active network adapters were detected.')
-    }
-
-    $lines.Add('')
     $adapterFindings = [System.Collections.Generic.List[string]]::new()
     $apipa = @($activeAdapters | Where-Object { $_.IPv4 -match '169\.254\.' })
     if ($apipa.Count -gt 0) {
@@ -1460,19 +1411,173 @@ function New-NetGamitSystemHealthAnalysis {
         $adapterFindings.Add("Active adapter(s) without IPv4: $(@($activeWithoutIpv4.Name) -join ', '). This is fine only if they are IPv6-only, virtual, or special-purpose adapters.")
     }
 
-    if ($adapterFindings.Count -eq 0) {
-        $lines.Add('Adapter health: No obvious adapter/IP configuration errors were found in the active interfaces.')
+    $addSection = {
+        param([string]$Title)
+        if ($lines.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($lines[$lines.Count - 1])) {
+            $lines.Add('')
+        }
+        $lines.Add($Title.ToUpperInvariant())
+        $lines.Add(('-' * $Title.Length))
+    }
+
+    $addField = {
+        param(
+            [string]$Label,
+            [AllowNull()]
+            [object]$Value
+        )
+        $displayValue = & $formatValue $Value 'Not reported'
+        $lines.Add(('{0,-20}: {1}' -f $Label, $displayValue))
+    }
+
+    $primaryLabel = if ($primaryType -eq 'WLAN') {
+        'Wi-Fi/WLAN'
+    }
+    elseif ($primaryType -eq 'LAN') {
+        'LAN/Ethernet'
     }
     else {
-        $lines.Add('Adapter health: Needs attention')
+        $primaryType
+    }
+
+    $wlan = $null
+    $wlanSummary = 'Not connected or not reported'
+    $wlanInternetRole = 'Not applicable'
+    if ($connectedWlan.Count -gt 0) {
+        $wlan = $connectedWlan | Select-Object -First 1
+        $ssid = & $formatValue $wlan.SSID 'unknown SSID'
+        $signal = & $formatValue $wlan.Signal 'signal not reported'
+        $signalQuality = & $formatValue $wlan.SignalQuality 'unknown quality'
+        $rssiText = if ($null -ne $wlan.RssiDbm) {
+            "RSSI $($wlan.RssiDbm) dBm"
+        }
+        elseif ($null -ne $wlan.ApproxRssiDbm) {
+            "about $($wlan.ApproxRssiDbm) dBm estimated"
+        }
+        else {
+            'RSSI not reported'
+        }
+        $wlanSummary = "Connected to '$ssid'; $signal, $signalQuality, $rssiText"
+        $wlanInternetRole = if ($primaryType -eq 'WLAN') {
+            'Preferred internet path'
+        }
+        else {
+            'Connected, but not the preferred internet path'
+        }
+    }
+    elseif ($activeAdapters | Where-Object { $_.InterfaceDescription -match 'Wireless|Wi-Fi|WiFi|802\.11' -and $_.Status -eq 'Up' }) {
+        $wlanSummary = 'Wireless adapter is up, but no active WLAN association was reported'
+    }
+
+    $overallStatus = if (-not $primary) {
+        'Attention required - no IPv4 default route detected'
+    }
+    elseif ($adapterFindings.Count -gt 0) {
+        'Review recommended - adapter/IP findings detected'
+    }
+    else {
+        'Healthy / network-ready'
+    }
+
+    $lines.Add('NETWORK HEALTH SUMMARY')
+    $lines.Add('======================')
+    $lines.Add('')
+
+    & $addSection '1. Overall Status'
+    & $addField 'Result' $overallStatus
+    & $addField 'Active interfaces' $activeAdapters.Count
+    if ($primary) {
+        & $addField 'Primary path' "$primaryLabel through '$($primary.InterfaceAlias)'"
+        & $addField 'Route metric' "$($primary.TotalMetric) (lowest metric is preferred by Windows)"
+    }
+    else {
+        & $addField 'Primary path' 'Not found'
+    }
+    & $addField 'Wi-Fi condition' $wlanSummary
+    if ($connectedWlan.Count -gt 0) {
+        & $addField 'Wi-Fi role' $wlanInternetRole
+    }
+
+    & $addSection '2. Primary Internet Route'
+    if ($primary) {
+        $gatewayText = & $formatValue $primary.NextHop 'direct/none'
+        & $addField 'Interface' $primary.InterfaceAlias
+        & $addField 'Type' $primaryLabel
+        & $addField 'Gateway/next hop' $gatewayText
+        & $addField 'Route metric' $primary.TotalMetric
+
+        if ($primaryAdapter) {
+            & $addField 'IPv4 address' $primaryAdapter.IPv4
+            & $addField 'DNS servers' $primaryAdapter.DnsServers
+            & $addField 'Link speed' $primaryAdapter.LinkSpeed
+            $primaryDuplex = & $formatValue $primaryAdapter.Duplex 'Not reported'
+            if ($primaryType -eq 'WLAN' -and $primaryDuplex -eq 'Not reported') {
+                $primaryDuplex = 'Not applicable/reported for Wi-Fi'
+            }
+            & $addField 'Duplex' $primaryDuplex
+        }
+
+        $routeAssessment = "Windows should use '$($primary.InterfaceAlias)' for default internet traffic."
+        if ($connectedWlan.Count -gt 0 -and $primaryType -ne 'WLAN') {
+            $routeAssessment += ' Wi-Fi is connected, but it is not the selected default route.'
+        }
+        & $addField 'Assessment' $routeAssessment
+    }
+    else {
+        $lines.Add('- No IPv4 default route was detected.')
+        $lines.Add('- Internet or routed network access may not work until a default route is restored.')
+    }
+
+    & $addSection '3. Active Interfaces'
+    if ($activeAdapters.Count -gt 0) {
+        $orderedActiveAdapters = $activeAdapters | Sort-Object @{ Expression = { if ($primary -and ($_.Name -eq $primary.InterfaceAlias -or $_.IfIndex -eq $primary.ifIndex)) { 0 } else { 1 } } }, Name
+        foreach ($adapter in $orderedActiveAdapters) {
+            $adapterType = & $getAdapterType $adapter
+            $speed = & $formatValue $adapter.LinkSpeed 'Not reported'
+            $duplex = & $formatValue $adapter.Duplex 'Not reported'
+            if ($adapterType -eq 'WLAN' -and $duplex -eq 'Not reported') {
+                $duplex = 'Not applicable/reported for Wi-Fi'
+            }
+            $ipv4 = & $formatValue $adapter.IPv4 'No IPv4 address'
+            $gateway = & $formatValue $adapter.Gateway 'No default gateway on this adapter'
+            $dnsServers = & $formatValue $adapter.DnsServers 'No DNS servers listed'
+            $role = if ($primary -and ($adapter.Name -eq $primary.InterfaceAlias -or $adapter.IfIndex -eq $primary.ifIndex)) {
+                'Primary default route'
+            }
+            else {
+                'Active secondary interface'
+            }
+
+            $lines.Add("- $($adapter.Name)")
+            $lines.Add(('  {0,-18}: {1}' -f 'Role', $role))
+            $lines.Add(('  {0,-18}: {1}' -f 'Type', $adapterType))
+            $lines.Add(('  {0,-18}: {1}' -f 'Status', $adapter.Status))
+            $lines.Add(('  {0,-18}: {1}' -f 'Description', (& $formatValue $adapter.InterfaceDescription 'Not reported')))
+            $lines.Add(('  {0,-18}: {1}' -f 'Link speed', $speed))
+            $lines.Add(('  {0,-18}: {1}' -f 'Duplex', $duplex))
+            $lines.Add(('  {0,-18}: {1}' -f 'IPv4 address', $ipv4))
+            $lines.Add(('  {0,-18}: {1}' -f 'Gateway', $gateway))
+            $lines.Add(('  {0,-18}: {1}' -f 'DNS servers', $dnsServers))
+        }
+    }
+    else {
+        $lines.Add('- No active network adapters were detected.')
+    }
+
+    & $addSection '4. Adapter And IP Health'
+    if ($adapterFindings.Count -eq 0) {
+        & $addField 'Status' 'No issues detected'
+        $lines.Add('- No obvious adapter or IP configuration errors were found in the active interfaces.')
+    }
+    else {
+        & $addField 'Status' 'Needs attention'
         foreach ($finding in $adapterFindings) {
             $lines.Add("- $finding")
         }
     }
 
-    $lines.Add('')
+    & $addSection '5. Wi-Fi Condition'
     if ($connectedWlan.Count -gt 0) {
-        $wlan = $connectedWlan | Select-Object -First 1
         $ssid = & $formatValue $wlan.SSID 'unknown SSID'
         $bssid = & $formatValue $wlan.BSSID 'unknown BSSID'
         $radio = & $formatValue $wlan.RadioType 'radio type not reported'
@@ -1489,47 +1594,62 @@ function New-NetGamitSystemHealthAnalysis {
         }
         $signalQuality = & $formatValue $wlan.SignalQuality 'unknown'
 
-        $lines.Add('Wi-Fi status: Connected')
-        $lines.Add("SSID: $ssid")
-        $lines.Add("AP/BSSID: $bssid")
-        $lines.Add("Radio/band/channel: $radio, $band, channel $($wlan.Channel)")
-        $lines.Add("Signal: $signal ($signalQuality, $rssi)")
+        & $addField 'Status' 'Connected'
+        & $addField 'SSID' $ssid
+        & $addField 'AP/BSSID' $bssid
+        & $addField 'Radio' $radio
+        & $addField 'Band/channel' "$band, channel $($wlan.Channel)"
+        & $addField 'Signal' "$signal ($signalQuality, $rssi)"
+        & $addField 'Internet role' $wlanInternetRole
 
         if ($wlan.SignalPercent -ne $null -and $wlan.SignalPercent -ge 80) {
-            $lines.Add('Wi-Fi interpretation: Signal is excellent. Wi-Fi signal strength is not likely to be the cause of slowness or drops.')
+            & $addField 'Assessment' 'Signal is excellent. Wi-Fi signal strength is not likely to be the cause of slowness or drops.'
         }
         elseif ($wlan.SignalPercent -ne $null -and $wlan.SignalPercent -ge 60) {
-            $lines.Add('Wi-Fi interpretation: Signal is good. It should be stable for normal work.')
+            & $addField 'Assessment' 'Signal is good. It should be stable for normal work.'
         }
         elseif ($wlan.SignalPercent -ne $null -and $wlan.SignalPercent -ge 40) {
-            $lines.Add('Wi-Fi interpretation: Signal is fair. Latency or throughput may degrade, especially under load.')
+            & $addField 'Assessment' 'Signal is fair. Latency or throughput may degrade, especially under load.'
         }
         elseif ($wlan.SignalPercent -ne $null) {
-            $lines.Add('Wi-Fi interpretation: Signal is poor. Expect roaming, retransmissions, reduced throughput, or intermittent drops.')
+            & $addField 'Assessment' 'Signal is poor. Expect roaming, retransmissions, reduced throughput, or intermittent drops.'
         }
         else {
-            $lines.Add('Wi-Fi interpretation: Signal quality could not be determined from netsh output.')
+            & $addField 'Assessment' 'Signal quality could not be determined from netsh output.'
         }
     }
     elseif ($activeAdapters | Where-Object { $_.InterfaceDescription -match 'Wireless|Wi-Fi|WiFi|802\.11' -and $_.Status -eq 'Up' }) {
-        $lines.Add('Wi-Fi status: Wireless adapter is up, but netsh did not report an active WLAN connection.')
+        & $addField 'Status' 'Adapter is up, but no active WLAN connection was reported'
     }
     else {
-        $lines.Add('Wi-Fi status: Not connected or no WLAN adapter was reported.')
+        & $addField 'Status' 'Not connected or no WLAN adapter was reported'
     }
 
-    $lines.Add('')
+    & $addSection '6. Routing Observation'
     if ($defaultRoutes.Count -gt 1) {
-        $lines.Add("Routing note: $($defaultRoutes.Count) default routes exist. Windows should prefer '$($primary.InterfaceAlias)' because it has the lowest route metric.")
+        & $addField 'Default routes' $defaultRoutes.Count
+        if ($primary) {
+            & $addField 'Preferred route' "'$($primary.InterfaceAlias)' with metric $($primary.TotalMetric)"
+            & $addField 'Assessment' "Multiple default routes are present. Windows should prefer '$($primary.InterfaceAlias)' because it has the lowest route metric."
+        }
     }
     else {
-        $lines.Add('Routing note: A single default route is present.')
+        & $addField 'Default routes' $defaultRoutes.Count
+        if ($primary) {
+            & $addField 'Assessment' 'A single IPv4 default route is present.'
+        }
+        else {
+            & $addField 'Assessment' 'No IPv4 default route was detected.'
+        }
     }
 
-    $lines.Add('')
-    $lines.Add('Bottom line:')
+    & $addSection '7. Conclusion'
     if ($adapterFindings.Count -eq 0 -and $primary) {
-        $lines.Add("The machine appears network-ready. Primary internet traffic should leave through '$($primary.InterfaceAlias)' ($primaryType).")
+        $conclusion = "The machine appears network-ready. Primary internet traffic should leave through '$($primary.InterfaceAlias)' ($primaryLabel)."
+        if ($connectedWlan.Count -gt 0 -and $primaryType -ne 'WLAN') {
+            $conclusion += ' Wi-Fi is connected and available, but Windows is currently routing default internet traffic through another interface.'
+        }
+        $lines.Add($conclusion)
     }
     elseif (-not $primary) {
         $lines.Add('The machine may not have internet access because no default route was found.')
@@ -2290,7 +2410,7 @@ function New-NetGamitCombinedReport {
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Test data" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and Conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
                         <TextBox Grid.Row="1" Grid.Column="0" Name="NetworkOutputBox" Style="{StaticResource MonoTextBox}"/>
                         <TextBox Grid.Row="1" Grid.Column="1" Name="NetworkAnalysisBox" Style="{StaticResource MonoTextBox}" Margin="12,0,0,0" TextWrapping="Wrap"/>
                     </Grid>
@@ -2323,7 +2443,7 @@ function New-NetGamitCombinedReport {
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Network health data" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and Conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
                         <TextBox Grid.Row="1" Grid.Column="0" Name="HealthOutputBox" Style="{StaticResource MonoTextBox}"/>
                         <TextBox Grid.Row="1" Grid.Column="1" Name="HealthAnalysisBox" Style="{StaticResource MonoTextBox}" Margin="12,0,0,0" TextWrapping="Wrap"/>
                     </Grid>
@@ -2356,7 +2476,7 @@ function New-NetGamitCombinedReport {
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="WLAN diagnostic data" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and Conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
                         <TextBox Grid.Row="1" Grid.Column="0" Name="WlanOutputBox" Style="{StaticResource MonoTextBox}"/>
                         <TextBox Grid.Row="1" Grid.Column="1" Name="WlanAnalysisBox" Style="{StaticResource MonoTextBox}" Margin="12,0,0,0" TextWrapping="Wrap"/>
                     </Grid>
