@@ -1,5 +1,6 @@
 # Net-Gamit
-<img width="1150" height="791" alt="image" src="https://github.com/user-attachments/assets/be2dcf2f-e21c-4383-8b45-1b8f2c1ce721" />
+
+<img width="1361" height="863" alt="image" src="https://github.com/user-attachments/assets/240a76a0-f137-4bc9-978f-e05b268de221" />
 
 Net-Gamit is a native Windows PowerShell + WPF GUI for destination-node testing, network health checks, and WLAN diagnostics.
 
