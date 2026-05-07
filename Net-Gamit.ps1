@@ -2126,6 +2126,475 @@ $($raw.ToString().TrimEnd())
     }
 }
 
+function Get-NetGamitProcessMap {
+    $processMap = @{}
+
+    try {
+        foreach ($process in @(Get-Process -ErrorAction Stop)) {
+            $path = $null
+            $description = $null
+
+            try {
+                $path = $process.Path
+            }
+            catch {
+                $path = $null
+            }
+
+            try {
+                $description = $process.Description
+            }
+            catch {
+                $description = $null
+            }
+
+            $processMap[[int]$process.Id] = [pscustomobject]@{
+                ProcessId   = [int]$process.Id
+                ProcessName = $process.ProcessName
+                Path        = $path
+                Description = $description
+            }
+        }
+    }
+    catch {
+    }
+
+    return $processMap
+}
+
+function Get-NetGamitProcessInfo {
+    param(
+        [AllowNull()]
+        [object]$ProcessId,
+
+        [Parameter(Mandatory)]
+        [hashtable]$ProcessMap
+    )
+
+    $pidValue = 0
+    if ($null -ne $ProcessId) {
+        [void][int]::TryParse([string]$ProcessId, [ref]$pidValue)
+    }
+
+    if ($ProcessMap.ContainsKey($pidValue)) {
+        return $ProcessMap[$pidValue]
+    }
+
+    if ($pidValue -eq 0) {
+        return [pscustomobject]@{
+            ProcessId   = 0
+            ProcessName = 'System/Idle'
+            Path        = $null
+            Description = 'System process'
+        }
+    }
+
+    try {
+        $process = Get-Process -Id $pidValue -ErrorAction Stop
+        $path = $null
+        $description = $null
+
+        try {
+            $path = $process.Path
+        }
+        catch {
+            $path = $null
+        }
+
+        try {
+            $description = $process.Description
+        }
+        catch {
+            $description = $null
+        }
+
+        return [pscustomobject]@{
+            ProcessId   = $pidValue
+            ProcessName = $process.ProcessName
+            Path        = $path
+            Description = $description
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            ProcessId   = $pidValue
+            ProcessName = 'Unknown or exited process'
+            Path        = $null
+            Description = $null
+        }
+    }
+}
+
+function Get-NetGamitSocketCreationTime {
+    param(
+        [AllowNull()]
+        [object]$Socket
+    )
+
+    if ($null -eq $Socket -or -not $Socket.PSObject.Properties['CreationTime']) {
+        return $null
+    }
+
+    $creationTime = $Socket.CreationTime
+    if ($null -eq $creationTime) {
+        return $null
+    }
+
+    if ($creationTime -is [datetime]) {
+        if ([datetime]$creationTime -le [datetime]::MinValue.AddDays(1)) {
+            return $null
+        }
+
+        return [datetime]$creationTime
+    }
+
+    $parsed = [datetime]::MinValue
+    if ([datetime]::TryParse([string]$creationTime, [ref]$parsed) -and $parsed -gt [datetime]::MinValue.AddDays(1)) {
+        return $parsed
+    }
+
+    return $null
+}
+
+function Get-NetGamitSocketAgeText {
+    param(
+        [AllowNull()]
+        [datetime]$CreationTime,
+
+        [Parameter(Mandatory)]
+        [datetime]$Now
+    )
+
+    if ($null -eq $CreationTime -or $CreationTime -le [datetime]::MinValue.AddDays(1)) {
+        return 'Not available'
+    }
+
+    if ($CreationTime -gt $Now) {
+        return 'Not available'
+    }
+
+    return (Format-NetGamitDuration -Duration ($Now - $CreationTime))
+}
+
+function ConvertTo-NetGamitTcpSocketRecord {
+    param(
+        [Parameter(Mandatory)]
+        [object]$Connection,
+
+        [Parameter(Mandatory)]
+        [hashtable]$ProcessMap,
+
+        [Parameter(Mandatory)]
+        [datetime]$Now
+    )
+
+    $processInfo = Get-NetGamitProcessInfo -ProcessId $Connection.OwningProcess -ProcessMap $ProcessMap
+    $creationTime = Get-NetGamitSocketCreationTime -Socket $Connection
+
+    [pscustomobject]@{
+        Protocol      = 'TCP'
+        LocalAddress  = $Connection.LocalAddress
+        LocalPort     = $Connection.LocalPort
+        RemoteAddress = $Connection.RemoteAddress
+        RemotePort    = $Connection.RemotePort
+        State         = $Connection.State
+        ProcessId     = $processInfo.ProcessId
+        ProcessName   = $processInfo.ProcessName
+        ProcessPath   = $processInfo.Path
+        Description   = $processInfo.Description
+        CreationTime  = $creationTime
+        EstablishedFor = Get-NetGamitSocketAgeText -CreationTime $creationTime -Now $Now
+        AppliedSetting = $Connection.AppliedSetting
+        OffloadState  = if ($Connection.PSObject.Properties['OffloadState']) { $Connection.OffloadState } else { $null }
+    }
+}
+
+function ConvertTo-NetGamitUdpSocketRecord {
+    param(
+        [Parameter(Mandatory)]
+        [object]$Endpoint,
+
+        [Parameter(Mandatory)]
+        [hashtable]$ProcessMap,
+
+        [Parameter(Mandatory)]
+        [datetime]$Now
+    )
+
+    $processInfo = Get-NetGamitProcessInfo -ProcessId $Endpoint.OwningProcess -ProcessMap $ProcessMap
+    $creationTime = Get-NetGamitSocketCreationTime -Socket $Endpoint
+
+    [pscustomobject]@{
+        Protocol      = 'UDP'
+        LocalAddress  = $Endpoint.LocalAddress
+        LocalPort     = $Endpoint.LocalPort
+        RemoteAddress = ''
+        RemotePort    = ''
+        State         = 'Endpoint'
+        ProcessId     = $processInfo.ProcessId
+        ProcessName   = $processInfo.ProcessName
+        ProcessPath   = $processInfo.Path
+        Description   = $processInfo.Description
+        CreationTime  = $creationTime
+        EstablishedFor = Get-NetGamitSocketAgeText -CreationTime $creationTime -Now $Now
+        AppliedSetting = $null
+        OffloadState  = $null
+    }
+}
+
+function New-NetGamitProcessSocketSummary {
+    param(
+        [AllowNull()]
+        [object[]]$Sockets
+    )
+
+    $summary = @()
+    foreach ($group in @($Sockets | Group-Object ProcessId)) {
+        $items = @($group.Group)
+        if ($items.Count -eq 0) {
+            continue
+        }
+
+        $first = $items | Select-Object -First 1
+        $tcpItems = @($items | Where-Object { $_.Protocol -eq 'TCP' })
+        $udpItems = @($items | Where-Object { $_.Protocol -eq 'UDP' })
+        $listeningTcp = @($tcpItems | Where-Object { $_.State -eq 'Listen' })
+        $establishedTcp = @($tcpItems | Where-Object { $_.State -eq 'Established' })
+        $localPorts = @($items | Where-Object { $_.LocalPort -ne $null } | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique)
+
+        $portText = if ($localPorts.Count -eq 0) {
+            'None'
+        }
+        elseif ($localPorts.Count -gt 20) {
+            "$(@($localPorts | Select-Object -First 20) -join ', ') ... ($($localPorts.Count) total)"
+        }
+        else {
+            $localPorts -join ', '
+        }
+
+        $summary += [pscustomobject]@{
+            ProcessName     = $first.ProcessName
+            ProcessId       = $first.ProcessId
+            SocketCount     = $items.Count
+            TcpTotal        = $tcpItems.Count
+            TcpEstablished  = $establishedTcp.Count
+            TcpListening    = $listeningTcp.Count
+            UdpEndpoints    = $udpItems.Count
+            LocalPorts      = $portText
+            Path            = $first.ProcessPath
+        }
+    }
+
+    return @($summary | Sort-Object -Property @{ Expression = 'SocketCount'; Descending = $true }, ProcessName)
+}
+
+function Join-NetGamitPortList {
+    param(
+        [AllowNull()]
+        [object[]]$Ports
+    )
+
+    $uniquePorts = @($Ports | Where-Object { $_ -ne $null -and $_ -ne '' } | Sort-Object -Unique)
+    if ($uniquePorts.Count -eq 0) {
+        return 'None'
+    }
+
+    if ($uniquePorts.Count -gt 35) {
+        return "$(@($uniquePorts | Select-Object -First 35) -join ', ') ... ($($uniquePorts.Count) total)"
+    }
+
+    return ($uniquePorts -join ', ')
+}
+
+function New-NetGamitProcessAnalysis {
+    param(
+        [Parameter(Mandatory)]
+        [object]$Data
+    )
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $tcpSockets = @($Data.TcpSockets)
+    $udpSockets = @($Data.UdpSockets)
+    $allSockets = @($tcpSockets + $udpSockets)
+    $processSummary = @($Data.ProcessSummary)
+    $tcpListening = @($tcpSockets | Where-Object { $_.State -eq 'Listen' })
+    $tcpEstablished = @($tcpSockets | Where-Object { $_.State -eq 'Established' })
+    $udpEndpoints = @($udpSockets)
+    $connectionsWithAge = @($tcpEstablished | Where-Object { $_.CreationTime })
+    $longestConnection = $connectionsWithAge | Sort-Object CreationTime | Select-Object -First 1
+
+    $lines.Add('PROCESS AND SOCKET SUMMARY')
+    $lines.Add('==========================')
+    $lines.Add('')
+    $lines.Add('1. Overall Status')
+    $lines.Add('-----------------')
+    $lines.Add(('Processes using TCP/UDP sockets : {0}' -f $processSummary.Count))
+    $lines.Add(('Total TCP sockets               : {0}' -f $tcpSockets.Count))
+    $lines.Add(('Established TCP connections     : {0}' -f $tcpEstablished.Count))
+    $lines.Add(('TCP listening/open ports        : {0}' -f $tcpListening.Count))
+    $lines.Add(('UDP endpoints/open ports        : {0}' -f $udpEndpoints.Count))
+    $lines.Add('')
+
+    $lines.Add('2. Open Local Ports')
+    $lines.Add('-------------------')
+    $lines.Add(('TCP listening ports : {0}' -f (Join-NetGamitPortList -Ports @($tcpListening | Select-Object -ExpandProperty LocalPort))))
+    $lines.Add(('UDP local ports     : {0}' -f (Join-NetGamitPortList -Ports @($udpEndpoints | Select-Object -ExpandProperty LocalPort))))
+    $lines.Add('Note: 0.0.0.0 or :: means the socket is bound to all local interfaces.')
+    $lines.Add('')
+
+    $lines.Add('3. Top Processes By Socket Use')
+    $lines.Add('------------------------------')
+    if ($processSummary.Count -gt 0) {
+        foreach ($process in @($processSummary | Select-Object -First 10)) {
+            $lines.Add(('- {0} (PID {1}) - sockets: {2}; TCP established/listening: {3}/{4}; UDP endpoints: {5}' -f $process.ProcessName, $process.ProcessId, $process.SocketCount, $process.TcpEstablished, $process.TcpListening, $process.UdpEndpoints))
+        }
+    }
+    else {
+        $lines.Add('- No TCP or UDP sockets were returned by Windows.')
+    }
+    $lines.Add('')
+
+    $lines.Add('4. Connection Age')
+    $lines.Add('-----------------')
+    if ($longestConnection) {
+        $remoteEndpoint = "$($longestConnection.RemoteAddress):$($longestConnection.RemotePort)"
+        $lines.Add(('Longest established TCP connection : {0} (PID {1}) to {2}' -f $longestConnection.ProcessName, $longestConnection.ProcessId, $remoteEndpoint))
+        $lines.Add(('Established since                  : {0}' -f $longestConnection.CreationTime))
+        $lines.Add(('Established for                    : {0}' -f $longestConnection.EstablishedFor))
+        $lines.Add(('Connections with age data          : {0} of {1}' -f $connectionsWithAge.Count, $tcpEstablished.Count))
+    }
+    elseif ($tcpEstablished.Count -gt 0) {
+        $lines.Add('Windows returned established TCP connections, but no CreationTime data was available for connection age calculation.')
+    }
+    else {
+        $lines.Add('No established TCP connections were detected at the time of the scan.')
+    }
+    $lines.Add('UDP is connectionless, so there is no true established duration for UDP endpoints.')
+    $lines.Add('')
+
+    $lines.Add('5. Interpretation')
+    $lines.Add('-----------------')
+    if ($tcpListening.Count -gt 0 -or $udpEndpoints.Count -gt 0) {
+        $lines.Add('Open ports were found. TCP listening ports indicate local services waiting for connections. UDP endpoints indicate applications listening or bound for connectionless traffic.')
+    }
+    else {
+        $lines.Add('No TCP listening ports or UDP endpoints were returned by Windows.')
+    }
+
+    if ($tcpEstablished.Count -gt 0) {
+        $lines.Add('Established TCP connections show active conversations between this machine and remote endpoints.')
+    }
+    else {
+        $lines.Add('No established TCP sessions were present during the scan window.')
+    }
+
+    $lines.Add('Review unknown processes, unexpected listening ports, or applications with unusually high socket counts if troubleshooting performance, security, or connectivity behavior.')
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Invoke-NetGamitProcessDiagnostics {
+    $timestamp = Get-Date
+    $now = Get-Date
+    $raw = [System.Text.StringBuilder]::new()
+    [void]$raw.AppendLine('Net-Gamit Process and Socket Diagnostics')
+    [void]$raw.AppendLine("Timestamp : $timestamp")
+    [void]$raw.AppendLine("Computer  : $env:COMPUTERNAME")
+    [void]$raw.AppendLine("User      : $env:USERDOMAIN\$env:USERNAME")
+
+    $processMap = Get-NetGamitProcessMap
+
+    $tcpSockets = @()
+    try {
+        $tcpSockets = @(Get-NetTCPConnection -ErrorAction Stop | ForEach-Object {
+            ConvertTo-NetGamitTcpSocketRecord -Connection $_ -ProcessMap $processMap -Now $now
+        })
+    }
+    catch {
+        $tcpSockets = @([pscustomobject]@{
+            Protocol       = 'TCP'
+            LocalAddress   = ''
+            LocalPort      = ''
+            RemoteAddress  = ''
+            RemotePort     = ''
+            State          = 'Collection failed'
+            ProcessId      = ''
+            ProcessName    = $_.Exception.Message
+            ProcessPath    = ''
+            Description    = ''
+            CreationTime   = $null
+            EstablishedFor = 'Not available'
+            AppliedSetting = ''
+            OffloadState   = ''
+        })
+    }
+
+    $udpSockets = @()
+    try {
+        $udpSockets = @(Get-NetUDPEndpoint -ErrorAction Stop | ForEach-Object {
+            ConvertTo-NetGamitUdpSocketRecord -Endpoint $_ -ProcessMap $processMap -Now $now
+        })
+    }
+    catch {
+        $udpSockets = @([pscustomobject]@{
+            Protocol       = 'UDP'
+            LocalAddress   = ''
+            LocalPort      = ''
+            RemoteAddress  = ''
+            RemotePort     = ''
+            State          = 'Collection failed'
+            ProcessId      = ''
+            ProcessName    = $_.Exception.Message
+            ProcessPath    = ''
+            Description    = ''
+            CreationTime   = $null
+            EstablishedFor = 'Not available'
+            AppliedSetting = ''
+            OffloadState   = ''
+        })
+    }
+
+    $allSockets = @($tcpSockets + $udpSockets)
+    $processSummary = @(New-NetGamitProcessSocketSummary -Sockets $allSockets)
+    $tcpListening = @($tcpSockets | Where-Object { $_.State -eq 'Listen' })
+    $tcpEstablished = @($tcpSockets | Where-Object { $_.State -eq 'Established' })
+
+    [void]$raw.AppendLine((New-TextSection -Title 'Process Socket Summary' -Content ($processSummary | Format-Table ProcessName, ProcessId, SocketCount, TcpTotal, TcpEstablished, TcpListening, UdpEndpoints, LocalPorts -AutoSize | Out-String -Width 300)))
+    [void]$raw.AppendLine((New-TextSection -Title 'Open TCP Listening Ports' -Content ($tcpListening | Sort-Object LocalPort, ProcessName | Format-Table LocalAddress, LocalPort, ProcessName, ProcessId, ProcessPath -AutoSize | Out-String -Width 300)))
+    [void]$raw.AppendLine((New-TextSection -Title 'Open UDP Endpoints' -Content ($udpSockets | Sort-Object LocalPort, ProcessName | Format-Table LocalAddress, LocalPort, ProcessName, ProcessId, ProcessPath -AutoSize | Out-String -Width 300)))
+    [void]$raw.AppendLine((New-TextSection -Title 'Established TCP Connections' -Content ($tcpEstablished | Sort-Object ProcessName, RemoteAddress, RemotePort | Format-Table LocalAddress, LocalPort, RemoteAddress, RemotePort, State, EstablishedFor, CreationTime, ProcessName, ProcessId -AutoSize | Out-String -Width 300)))
+    [void]$raw.AppendLine((New-TextSection -Title 'All TCP Sockets' -Content ($tcpSockets | Sort-Object State, LocalPort, ProcessName | Format-Table LocalAddress, LocalPort, RemoteAddress, RemotePort, State, EstablishedFor, ProcessName, ProcessId, ProcessPath -AutoSize | Out-String -Width 300)))
+    [void]$raw.AppendLine((New-TextSection -Title 'All UDP Sockets' -Content ($udpSockets | Sort-Object LocalPort, ProcessName | Format-Table LocalAddress, LocalPort, State, EstablishedFor, ProcessName, ProcessId, ProcessPath -AutoSize | Out-String -Width 300)))
+
+    $netstat = Invoke-NetGamitNativeCommand -FilePath 'netstat.exe' -Arguments @('-ano')
+    [void]$raw.AppendLine((New-TextSection -Title 'Native netstat -ano' -Content $netstat))
+
+    $data = [pscustomobject]@{
+        Timestamp      = $timestamp
+        TcpSockets     = $tcpSockets
+        UdpSockets     = $udpSockets
+        ProcessSummary = $processSummary
+    }
+
+    $analysis = New-NetGamitProcessAnalysis -Data $data
+    $report = @"
+NET-GAMIT PROCESS AND SOCKET REPORT
+Generated: $timestamp
+
+$analysis
+
+DETAILS
+$($raw.ToString().TrimEnd())
+"@
+
+    [pscustomobject]@{
+        Data     = $data
+        RawText  = $raw.ToString().TrimEnd()
+        Analysis = $analysis
+        Report   = $report.TrimEnd()
+    }
+}
+
 function New-NetGamitCombinedReport {
     param(
         [AllowNull()]
@@ -2135,10 +2604,13 @@ function New-NetGamitCombinedReport {
         [object]$HealthResult,
 
         [AllowNull()]
-        [object]$WlanResult
+        [object]$WlanResult,
+
+        [AllowNull()]
+        [object]$ProcessResult
     )
 
-    if ($null -eq $NetworkResult -and $null -eq $HealthResult -and $null -eq $WlanResult) {
+    if ($null -eq $NetworkResult -and $null -eq $HealthResult -and $null -eq $WlanResult -and $null -eq $ProcessResult) {
         return ''
     }
 
@@ -2166,6 +2638,14 @@ function New-NetGamitCombinedReport {
 
     if ($WlanResult) {
         $sections.Add($WlanResult.Report)
+    }
+
+    if (($NetworkResult -or $HealthResult -or $WlanResult) -and $ProcessResult) {
+        $sections.Add('')
+    }
+
+    if ($ProcessResult) {
+        $sections.Add($ProcessResult.Report)
     }
 
     return ($sections -join [Environment]::NewLine).TrimEnd()
@@ -2414,6 +2894,39 @@ function New-NetGamitCombinedReport {
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Processes">
+                <Grid Margin="0,14,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="List TCP and UDP sockets, owning processes, open local ports, and TCP connection age when Windows provides it." VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                            <Button Grid.Column="1" Name="RunProcessButton" Content="Run Process Scan" MinWidth="156"/>
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Process and socket data" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Analysis and Conclusion" FontWeight="SemiBold" Margin="12,0,0,6"/>
+                        <TextBox Grid.Row="1" Grid.Column="0" Name="ProcessOutputBox" Style="{StaticResource MonoTextBox}"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" Name="ProcessAnalysisBox" Style="{StaticResource MonoTextBox}" Margin="12,0,0,0" TextWrapping="Wrap"/>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Reports">
                 <Grid Margin="0,14,0,0">
                     <Grid.RowDefinitions>
@@ -2421,7 +2934,7 @@ function New-NetGamitCombinedReport {
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Border Grid.Row="0" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12">
-                        <TextBlock Text="Reports are generated automatically after Test Destination Node, Network Health Check, or WLAN Diagnostics completes." Foreground="{StaticResource MutedTextBrush}"/>
+                        <TextBlock Text="Reports are generated automatically after Test Destination Node, Network Health Check, WLAN Diagnostics, or Processes completes." Foreground="{StaticResource MutedTextBrush}"/>
                     </Border>
                     <TextBox Grid.Row="1" Name="ReportBox" Style="{StaticResource MonoTextBox}" TextWrapping="NoWrap"/>
                 </Grid>
@@ -2457,6 +2970,9 @@ $HealthAnalysisBox = $window.FindName('HealthAnalysisBox')
 $RunWlanButton = $window.FindName('RunWlanButton')
 $WlanOutputBox = $window.FindName('WlanOutputBox')
 $WlanAnalysisBox = $window.FindName('WlanAnalysisBox')
+$RunProcessButton = $window.FindName('RunProcessButton')
+$ProcessOutputBox = $window.FindName('ProcessOutputBox')
+$ProcessAnalysisBox = $window.FindName('ProcessAnalysisBox')
 $ReportBox = $window.FindName('ReportBox')
 $ExportReportButton = $window.FindName('ExportReportButton')
 $ClearButton = $window.FindName('ClearButton')
@@ -2467,9 +2983,11 @@ $MainTabs = $window.FindName('MainTabs')
 $script:LastNetworkResult = $null
 $script:LastHealthResult = $null
 $script:LastWlanResult = $null
+$script:LastProcessResult = $null
 $script:LastNetworkReportText = $null
 $script:LastHealthReportText = $null
 $script:LastWlanReportText = $null
+$script:LastProcessReportText = $null
 $script:ActiveWorkers = [System.Collections.Generic.List[object]]::new()
 
 function Get-NetGamitWorkerScript {
@@ -2501,7 +3019,17 @@ function Get-NetGamitWorkerScript {
         'Get-NetGamitWlanEvents',
         'Format-NetGamitDuration',
         'New-NetGamitWlanAnalysis',
-        'Invoke-NetGamitWlanDiagnostics'
+        'Invoke-NetGamitWlanDiagnostics',
+        'Get-NetGamitProcessMap',
+        'Get-NetGamitProcessInfo',
+        'Get-NetGamitSocketCreationTime',
+        'Get-NetGamitSocketAgeText',
+        'ConvertTo-NetGamitTcpSocketRecord',
+        'ConvertTo-NetGamitUdpSocketRecord',
+        'New-NetGamitProcessSocketSummary',
+        'Join-NetGamitPortList',
+        'New-NetGamitProcessAnalysis',
+        'Invoke-NetGamitProcessDiagnostics'
     )
 
     $builder = [System.Text.StringBuilder]::new()
@@ -2531,6 +3059,7 @@ function Set-NetGamitBusy {
     $RunDiagnosticButton.IsEnabled = -not $IsBusy
     $RunHealthButton.IsEnabled = -not $IsBusy
     $RunWlanButton.IsEnabled = -not $IsBusy
+    $RunProcessButton.IsEnabled = -not $IsBusy
     Set-NetGamitReportActionState -IsBusy $IsBusy
     $BusyProgress.IsIndeterminate = $IsBusy
     $StatusText.Text = $Message
@@ -2587,7 +3116,8 @@ function Get-NetGamitUsefulText {
         '^Working\.\.\.$',
         '^Running diagnostics against .*\.\.\.$',
         '^Collecting network health data\.\.\.$',
-        '^Collecting system health data\.\.\.$'
+        '^Collecting system health data\.\.\.$',
+        '^Collecting process and socket data\.\.\.$'
     )
 
     foreach ($pattern in $placeholderPatterns) {
@@ -2729,7 +3259,18 @@ function Update-NetGamitReportView {
             -Details $WlanOutputBox.Text
     }
 
-    if ([string]::IsNullOrWhiteSpace($networkReport) -and [string]::IsNullOrWhiteSpace($healthReport) -and [string]::IsNullOrWhiteSpace($wlanReport)) {
+    $processReport = Get-NetGamitUsefulText -Text $script:LastProcessReportText
+    if ([string]::IsNullOrWhiteSpace($processReport)) {
+        $processReport = Get-NetGamitResultPropertyText -Result $script:LastProcessResult -PropertyName 'Report'
+    }
+    if ([string]::IsNullOrWhiteSpace($processReport)) {
+        $processReport = New-NetGamitPaneReport `
+            -Title 'NET-GAMIT PROCESS AND SOCKET REPORT' `
+            -Analysis $ProcessAnalysisBox.Text `
+            -Details $ProcessOutputBox.Text
+    }
+
+    if ([string]::IsNullOrWhiteSpace($networkReport) -and [string]::IsNullOrWhiteSpace($healthReport) -and [string]::IsNullOrWhiteSpace($wlanReport) -and [string]::IsNullOrWhiteSpace($processReport)) {
         $ReportBox.Text = ''
         Set-NetGamitReportActionState
         return
@@ -2756,6 +3297,13 @@ function Update-NetGamitReportView {
             $sections.Add('')
         }
         $sections.Add($wlanReport)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($processReport)) {
+        if ($sections.Count -gt 3) {
+            $sections.Add('')
+        }
+        $sections.Add($processReport)
     }
 
     $ReportBox.Text = ($sections -join [Environment]::NewLine).TrimEnd()
@@ -2932,11 +3480,32 @@ $RunWlanButton.Add_Click({
         }
 })
 
+$RunProcessButton.Add_Click({
+    $ProcessOutputBox.Text = 'Collecting process and socket data...'
+    $ProcessAnalysisBox.Text = 'Working...'
+
+    Start-NetGamitBackgroundTask `
+        -StatusMessage 'Running process and socket scan...' `
+        -Work {
+            Invoke-NetGamitProcessDiagnostics
+        } `
+        -OnComplete {
+            param($result)
+            $result = Select-NetGamitResultObject -Result $result
+            $script:LastProcessResult = $result
+            $script:LastProcessReportText = Get-NetGamitResultPropertyText -Result $result -PropertyName 'Report'
+            $ProcessOutputBox.Text = Get-NetGamitResultPropertyText -Result $result -PropertyName 'RawText'
+            $ProcessAnalysisBox.Text = Get-NetGamitResultPropertyText -Result $result -PropertyName 'Analysis'
+            Update-NetGamitReportView
+            $StatusText.Text = "Process and socket scan completed at $(Get-Date -Format 'HH:mm:ss')."
+        }
+})
+
 $ExportReportButton.Add_Click({
     Update-NetGamitReportView
 
     if ([string]::IsNullOrWhiteSpace($ReportBox.Text)) {
-        [System.Windows.MessageBox]::Show('Run Test Destination Node, Network Health Check, or WLAN Diagnostics before exporting a report.', 'Net-Gamit', 'OK', 'Information') | Out-Null
+        [System.Windows.MessageBox]::Show('Run Test Destination Node, Network Health Check, WLAN Diagnostics, or Processes before exporting a report.', 'Net-Gamit', 'OK', 'Information') | Out-Null
         return
     }
 
@@ -2958,13 +3527,17 @@ $ClearButton.Add_Click({
     $HealthAnalysisBox.Clear()
     $WlanOutputBox.Clear()
     $WlanAnalysisBox.Clear()
+    $ProcessOutputBox.Clear()
+    $ProcessAnalysisBox.Clear()
     $ReportBox.Clear()
     $script:LastNetworkResult = $null
     $script:LastHealthResult = $null
     $script:LastWlanResult = $null
+    $script:LastProcessResult = $null
     $script:LastNetworkReportText = $null
     $script:LastHealthReportText = $null
     $script:LastWlanReportText = $null
+    $script:LastProcessReportText = $null
     Set-NetGamitReportActionState
     $StatusText.Text = 'Cleared current session data.'
 })
